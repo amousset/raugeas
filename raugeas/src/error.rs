@@ -2,10 +2,10 @@
 
 use raugeas_sys::*;
 use std::ffi::NulError;
-use std::fmt;
+use std::{fmt, io};
 
 /// Represents possible errors that can occur.
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum Error {
     /// Augeas error
@@ -14,6 +14,8 @@ pub enum Error {
     Tree(Box<TreeError>),
     /// Unexpected nul character
     Nul(NulError),
+    /// I/O error
+    IO(io::Error),
 }
 
 impl fmt::Display for Error {
@@ -22,6 +24,7 @@ impl fmt::Display for Error {
             Error::Augeas(ref err) => err.fmt(f),
             Error::Nul(ref err) => err.fmt(f),
             Error::Tree(ref err) => err.fmt(f),
+            Error::IO(ref err) => err.fmt(f),
         }
     }
 }
@@ -98,6 +101,12 @@ impl From<AugeasError> for Error {
 impl From<TreeError> for Error {
     fn from(err: TreeError) -> Error {
         Error::Tree(Box::new(err))
+    }
+}
+
+impl From<io::Error> for Error {
+    fn from(err: io::Error) -> Error {
+        Error::IO(err)
     }
 }
 

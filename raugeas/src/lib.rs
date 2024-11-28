@@ -13,7 +13,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! augeas = "0.2.0"
+//! raugeas = "0.2.0"
 //! ```
 //!
 //! ## Summary
@@ -21,7 +21,7 @@
 //! A typical interaction looks like this:
 //!
 //! ```
-//! use augeas::{Augeas, Flags};
+//! use raugeas::{Augeas, Flags};
 //!
 //! let mut aug = Augeas::init("/", "", Flags::NONE).unwrap();
 //!
@@ -38,7 +38,7 @@
 //!     "etc/hosts/*[canonical = 'host.example.com']/alias[last()+1]",
 //!     "server.example.com",
 //! )?;
-//! # Ok::<(), augeas::Error>(())
+//! # Ok::<(), raugeas::Error>(())
 //! ```
 
 #![warn(rust_2018_idioms, unused_qualifications, missing_docs)]
@@ -47,7 +47,7 @@
 #[macro_use]
 extern crate bitflags;
 
-use augeas_sys::*;
+use raugeas_sys::*;
 use std::convert::From;
 use std::ffi::CString;
 use std::mem::transmute;

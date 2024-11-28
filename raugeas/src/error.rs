@@ -1,6 +1,6 @@
 //! Error types for the library
 
-use augeas_sys::*;
+use raugeas_sys::*;
 use std::ffi::NulError;
 use std::fmt;
 

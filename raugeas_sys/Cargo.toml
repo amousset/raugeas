@@ -1,5 +1,5 @@
 [package]
-name = "augeas_sys"
+name = "raugeas_sys"
 version = "0.2.0"
 authors = ["panicbit <panicbit.dev@gmail.com>", "Alexis Mousset <alexis.mousset@rudder.io>"]
 description = "Low level bindings for augeas"

@@ -1,9 +1,11 @@
-rust-augeas
-===========
+raugeas
+=======
 
-[![crates.io](https://img.shields.io/crates/v/augeas.svg)](https://crates.io/crates/augeas) [![Documentation](https://docs.rs/augeas/badge.svg)](https://docs.rs/augeas) [![CI](https://github.com/amousset/rust-augeas/actions/workflows/ci.yml/badge.svg)](https://github.com/amousset/rust-augeas/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/raugeas.svg)](https://crates.io/crates/raugeas) [![Documentation](https://docs.rs/raugeas/badge.svg)](https://docs.rs/raugeas) [![CI](https://github.com/normation/raugeas/actions/workflows/ci.yml/badge.svg)](https://github.com/normation/raugeas/actions/workflows/ci.yml)
 
-Rust binding for [Augeas](https://github.com/hercules-team/augeas).
+Rust binding for [Augeas](https://github.com/hercules-team/augeas), a configuration editing tool.
+
+These crates were forked from [hercules-team/rust-augeas](https://github.com/hercules-team/rust-augeas).
 
 ## Design
 
@@ -16,4 +18,5 @@ This library is a low-level binding to the C API of Augeas, with a few abstracti
   * `aug_print`
   * `aug_to_xml`
   * `aug_srun`
-
+* Allow building with older versions of Augeas (currently, it requires 1.13 or later).
+* [Add augeas to docs.rs build environment](https://forge.rust-lang.org/docs-rs/add-dependencies.html) to allow building the docs.

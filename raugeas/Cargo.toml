@@ -1,5 +1,5 @@
 [package]
-name = "augeas"
+name = "raugeas"
 version = "0.2.0"
 authors = ["panicbit <panicbit.dev@gmail.com>", "David Lutterkort <lutter@watzmann.net>", "Alexis Mousset <alexis.mousset@rudder.io>"]
 description = "Augeas bindings for Rust"
@@ -10,6 +10,6 @@ edition = "2021"
 rust-version = "1.77"
 
 [dependencies]
-augeas_sys = { path = "../augeas_sys" }
+raugeas_sys = { path = "../raugeas_sys", version = "0.2.0" }
 bitflags = "2.6.0"
 libc = "0.2.43"

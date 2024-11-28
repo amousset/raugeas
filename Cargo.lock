@@ -12,23 +12,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "augeas"
-version = "0.2.0"
-dependencies = [
- "augeas_sys",
- "bitflags",
- "libc",
-]
-
-[[package]]
-name = "augeas_sys"
-version = "0.2.0"
-dependencies = [
- "bindgen",
- "pkg-config",
-]
-
-[[package]]
 name = "bindgen"
 version = "0.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -103,9 +86,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.164"
+version = "0.2.166"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "433bfe06b8c75da9b2e3fbea6e5329ff87748f0b144ef75306e674c3f6f7c13f"
+checksum = "c2ccc108bbc0b1331bd061864e7cd823c0cab660bbe6970e66e2c0614decde36"
 
 [[package]]
 name = "libloading"
@@ -177,6 +160,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5b9d34b8991d19d98081b46eacdd8eb58c6f2b201139f7c5f643cc155a633af"
 dependencies = [
  "proc-macro2",
+]
+
+[[package]]
+name = "raugeas"
+version = "0.2.0"
+dependencies = [
+ "bitflags",
+ "libc",
+ "raugeas_sys",
+]
+
+[[package]]
+name = "raugeas_sys"
+version = "0.2.0"
+dependencies = [
+ "bindgen",
+ "pkg-config",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-use augeas_sys::*;
+use raugeas_sys::*;
 
 bitflags! {
     /// Flag to be passed to the `Augeas::init` method.

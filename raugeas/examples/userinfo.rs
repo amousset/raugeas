@@ -1,5 +1,4 @@
-extern crate augeas;
-use augeas::{Augeas, Flags};
+use raugeas::{Augeas, Flags};
 
 fn main() {
     let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();

@@ -13,7 +13,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! raugeas = "0.2.1"
+//! raugeas = "0.2.2"
 //! ```
 //!
 //! ## Summary
@@ -81,15 +81,21 @@ pub struct Augeas {
 }
 
 /// Parameters for the save modes.
+///
+/// After calling `save`, the list of files that has been changed can be found in the nodes.
+/// `/augeas/events/saved`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SaveMode {
-    /// Do not save changes in files.
+    /// Perform all the steps necessary for a file, including generating the contents of files from
+    /// the tree, but do not make any changes in the filesystem. This mode is very useful for making
+    /// sure that all changes can be saved without error, and to find out which files would actually
+    /// be modified.
     Noop,
-    /// Save changes into a file and overwrite the original file.
+    /// Overwrite files in place.
     Overwrite,
-    /// Save changes into a file with extension `.augnew`, and do not overwrite the original file.
+    /// Write the modified file into a file with extension `.augnew` without modifying the original file.
     NewFile,
-    /// Keep the original file with a `.augsave` extension.
+    /// Save the original file with the extension `.augsave` and write the new file under the original filename.
     Backup,
 }
 

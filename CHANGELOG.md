@@ -1,3 +1,11 @@
+## 0.2.2 (2024-12-15)
+
+- Add a helper enum and method for save modes ([62f4])
+- Implement std::Error for augeas::Error ([6420])
+
+[62f4]: https://github.com/Normation/raugeas/commit/62f4a58242ce2950a48975855cc5e74c3b66da0e
+[6420]: https://github.com/Normation/raugeas/commit/6420ee041245c3c33b25852d265196f40a6e081f
+
 ## 0.2.1 (2024-12-15)
 
 - Add support for `aug_print` and `aug_srun` ([b654], [dc57])

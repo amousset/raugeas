@@ -50,10 +50,13 @@ extern crate bitflags;
 use raugeas_sys::*;
 use std::convert::From;
 use std::ffi::CString;
+use std::fs::File;
+use std::io::{Read, Seek};
 use std::mem::transmute;
 use std::ops::Range;
+use std::os::fd::FromRawFd;
 use std::os::raw::{c_char, c_int};
-use std::ptr;
+use std::{io, ptr};
 
 pub mod error;
 use error::AugeasError;
@@ -150,6 +153,15 @@ pub struct Attr {
     pub value: Option<String>,
     /// The path of the file the node belongs to, or `None` if the node does not belong to a file.
     pub file_path: Option<String>,
+}
+
+/// Outcome of a successful `srun` command.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum CommandsNumber {
+    /// A `quit` command was issued.
+    Quit,
+    /// Number of commands that were successful.
+    Success(u32),
 }
 
 impl Augeas {
@@ -802,6 +814,82 @@ impl Augeas {
         Ok(p)
     }
 
+    /// Print each node matching `path` and its descendants.
+    pub fn print(&self, path: &str) -> Result<String> {
+        let path = CString::new(path)?;
+        let mode = CString::new("w")?;
+
+        let mut file;
+
+        unsafe {
+            let fd = libc::memfd_create(&0, 0);
+            if fd == -1 {
+                return Err(io::Error::last_os_error().into());
+            }
+            let out = libc::fdopen(fd, mode.as_ptr());
+            if out.is_null() {
+                return Err(io::Error::last_os_error().into());
+            }
+            aug_print(self.ptr, out as *mut _, path.as_ptr());
+            if libc::fflush(out) != 0 {
+                return Err(io::Error::last_os_error().into());
+            }
+            file = File::from_raw_fd(fd);
+        };
+        self.check_error()?;
+        file.rewind()?;
+
+        let mut res = String::new();
+        file.read_to_string(&mut res)?;
+
+        Ok(res)
+    }
+
+    /// Run one or more newline-separated commands.
+    ///
+    /// The output of the commands
+    /// will be returned as a `String`. Running just 'help' will print what commands are
+    /// available. Commands accepted by this are identical to what `augtool`
+    /// accepts.
+    pub fn srun(&self, commands: &str) -> Result<(CommandsNumber, String)> {
+        let commands = CString::new(commands)?;
+        let mode = CString::new("w")?;
+
+        let mut file;
+        let num;
+
+        unsafe {
+            let fd = libc::memfd_create(&0, 0);
+            if fd == -1 {
+                return Err(io::Error::last_os_error().into());
+            }
+            let out = libc::fdopen(fd, mode.as_ptr());
+            if out.is_null() {
+                return Err(io::Error::last_os_error().into());
+            }
+            num = aug_srun(self.ptr, out as *mut _, commands.as_ptr());
+            if libc::fflush(out) != 0 {
+                return Err(io::Error::last_os_error().into());
+            }
+            file = File::from_raw_fd(fd);
+        };
+        self.check_error()?;
+
+        let commands_num = if num == -1 {
+            unreachable!("srun -1 output is handled by check_error");
+        } else if num == -2 {
+            CommandsNumber::Quit
+        } else {
+            CommandsNumber::Success(num as u32)
+        };
+
+        let mut res = String::new();
+        file.rewind()?;
+        file.read_to_string(&mut res)?;
+
+        Ok((commands_num, res))
+    }
+
     fn check_error(&self) -> std::result::Result<(), AugeasError> {
         self.error().map(Err).unwrap_or(Ok(()))
     }
@@ -1152,11 +1240,11 @@ mod tests {
         let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
 
         // no escaping needed
-        let n = aug.escape_name("foo");
-        assert_eq!(Ok(None), n);
+        let n = aug.escape_name("foo").unwrap();
+        assert_eq!(None, n);
 
-        let n = aug.escape_name("foo[");
-        assert_eq!(Ok(Some(String::from("foo\\["))), n);
+        let n = aug.escape_name("foo[").unwrap();
+        assert_eq!(Some(String::from("foo\\[")), n);
     }
 
     #[test]
@@ -1227,6 +1315,35 @@ mod tests {
 
         let path = aug.ns_path("uid", 0).unwrap().unwrap();
         assert_eq!("/files/etc/passwd/root/uid", path);
+    }
+
+    #[test]
+    fn print_test() {
+        let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let content = aug.print("/augeas/version").unwrap();
+        assert!(content.starts_with("/augeas/version = \"1."));
+    }
+
+    #[test]
+    fn srun_test() {
+        let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let (num, res) = aug.srun("help").unwrap();
+        assert!(matches!(num, CommandsNumber::Success(_)));
+        assert!(res.contains("commands:"));
+    }
+
+    #[test]
+    fn srun_with_invalid_command() {
+        let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let result = aug.srun("invalid_command");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn srun_with_quit_command() {
+        let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let (num, _out) = aug.srun("quit").unwrap();
+        assert_eq!(num, CommandsNumber::Quit);
     }
 
     #[test]

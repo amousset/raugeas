@@ -14,9 +14,7 @@ This library is a low-level binding to the C API of Augeas, with a few abstracti
 ## TODO
 
 * Consider allowing non-UTF-8 strings for paths and values.
-* Consider adding missing bindings if it makes sense:
-  * `aug_print`
+* Consider adding missing bindings for the following functions:
   * `aug_to_xml`
-  * `aug_srun`
 * Allow building with older versions of Augeas (currently, it requires 1.13 or later).
 * [Add augeas to docs.rs build environment](https://forge.rust-lang.org/docs-rs/add-dependencies.html) to allow building the docs.

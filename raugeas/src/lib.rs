@@ -50,10 +50,11 @@ extern crate bitflags;
 use raugeas_sys::*;
 use std::convert::From;
 use std::ffi::CString;
+use std::fmt::Display;
 use std::mem::transmute;
 use std::ops::Range;
 use std::os::raw::{c_char, c_int};
-use std::ptr;
+use std::{fmt, ptr};
 
 pub mod error;
 use error::AugeasError;
@@ -77,6 +78,30 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// particular, the tree generated from parsing configuration files.
 pub struct Augeas {
     ptr: *mut augeas,
+}
+
+/// Parameters for the save modes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SaveMode {
+    /// Do not save changes in files.
+    Noop,
+    /// Save changes into a file and overwrite the original file.
+    Overwrite,
+    /// Save changes into a file with extension `.augnew`, and do not overwrite the original file.
+    NewFile,
+    /// Keep the original file with a `.augsave` extension.
+    Backup,
+}
+
+impl Display for SaveMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SaveMode::Noop => write!(f, "noop"),
+            SaveMode::Overwrite => write!(f, "overwrite"),
+            SaveMode::NewFile => write!(f, "newfile"),
+            SaveMode::Backup => write!(f, "backup"),
+        }
+    }
 }
 
 /// The insert position.
@@ -880,6 +905,11 @@ impl Augeas {
         })
     }
 
+    /// Set the behavior of the save operation.
+    pub fn set_save_mode(&mut self, mode: SaveMode) -> Result<()> {
+        self.set("/augeas/save", &mode.to_string())
+    }
+
     fn check_tree_error(&self, path: &str) -> Result<()> {
         match self.tree_error(path)? {
             Some(e) => Err(e.into()),
@@ -1315,6 +1345,23 @@ mod tests {
         let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
         let (num, _out) = aug.srun("quit").unwrap();
         assert_eq!(num, CommandsNumber::Quit);
+    }
+
+    #[test]
+    fn save_mode_test() {
+        let mut aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        aug.set_save_mode(SaveMode::Backup).unwrap();
+        let mode = aug.get("/augeas/save").unwrap().unwrap();
+        assert_eq!("backup", mode);
+        aug.set_save_mode(SaveMode::Noop).unwrap();
+        let mode = aug.get("/augeas/save").unwrap().unwrap();
+        assert_eq!("noop", mode);
+        aug.set_save_mode(SaveMode::NewFile).unwrap();
+        let mode = aug.get("/augeas/save").unwrap().unwrap();
+        assert_eq!("newfile", mode);
+        aug.set_save_mode(SaveMode::Overwrite).unwrap();
+        let mode = aug.get("/augeas/save").unwrap().unwrap();
+        assert_eq!("overwrite", mode);
     }
 
     #[test]

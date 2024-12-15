@@ -1,3 +1,10 @@
+## 0.2.1 (2024-12-15)
+
+- Add support for `aug_print` and `aug_srun` ([b654], [dc57])
+
+[b654]: https://github.com/Normation/raugeas/commit/b654139242129d366c0874ec3379f8c852f7131a
+[dc57]: https://github.com/Normation/raugeas/commit/dc576be9f438bda4c06598f0af081dac25c9a662
+
 ## 0.2.0 (2024-11-28)
 
 - Merge "Add bindings up to Augeas 1.11.0" PR [#10] from rust-augeas ([2394])

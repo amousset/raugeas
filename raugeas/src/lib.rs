@@ -50,13 +50,10 @@ extern crate bitflags;
 use raugeas_sys::*;
 use std::convert::From;
 use std::ffi::CString;
-use std::fs::File;
-use std::io::{Read, Seek};
 use std::mem::transmute;
 use std::ops::Range;
-use std::os::fd::FromRawFd;
 use std::os::raw::{c_char, c_int};
-use std::{io, ptr};
+use std::ptr;
 
 pub mod error;
 use error::AugeasError;
@@ -68,6 +65,7 @@ pub use self::flags::Flags;
 
 mod util;
 use crate::error::{ErrorPosition, TreeError};
+use crate::util::{new_memstream, read_memstream};
 use util::ptr_to_string;
 
 /// Shortcut for the result type used in this crate.
@@ -817,30 +815,16 @@ impl Augeas {
     /// Print each node matching `path` and its descendants.
     pub fn print(&self, path: &str) -> Result<String> {
         let path = CString::new(path)?;
-        let mode = CString::new("w")?;
-
-        let mut file;
+        let res;
 
         unsafe {
-            let fd = libc::memfd_create(&0, 0);
-            if fd == -1 {
-                return Err(io::Error::last_os_error().into());
-            }
-            let out = libc::fdopen(fd, mode.as_ptr());
-            if out.is_null() {
-                return Err(io::Error::last_os_error().into());
-            }
-            aug_print(self.ptr, out as *mut _, path.as_ptr());
-            if libc::fflush(out) != 0 {
-                return Err(io::Error::last_os_error().into());
-            }
-            file = File::from_raw_fd(fd);
+            let mut buf = ptr::null_mut();
+            let mut size = 0;
+            let file = new_memstream(&mut buf, &mut size)?;
+            aug_print(self.ptr, file as *mut _, path.as_ptr());
+            res = read_memstream(&mut buf, &mut size, file)?;
         };
         self.check_error()?;
-        file.rewind()?;
-
-        let mut res = String::new();
-        file.read_to_string(&mut res)?;
 
         Ok(res)
     }
@@ -853,25 +837,16 @@ impl Augeas {
     /// accepts.
     pub fn srun(&self, commands: &str) -> Result<(CommandsNumber, String)> {
         let commands = CString::new(commands)?;
-        let mode = CString::new("w")?;
 
-        let mut file;
+        let res;
         let num;
 
         unsafe {
-            let fd = libc::memfd_create(&0, 0);
-            if fd == -1 {
-                return Err(io::Error::last_os_error().into());
-            }
-            let out = libc::fdopen(fd, mode.as_ptr());
-            if out.is_null() {
-                return Err(io::Error::last_os_error().into());
-            }
-            num = aug_srun(self.ptr, out as *mut _, commands.as_ptr());
-            if libc::fflush(out) != 0 {
-                return Err(io::Error::last_os_error().into());
-            }
-            file = File::from_raw_fd(fd);
+            let mut buf = ptr::null_mut();
+            let mut size = 0;
+            let file = new_memstream(&mut buf, &mut size)?;
+            num = aug_srun(self.ptr, file as *mut _, commands.as_ptr());
+            res = read_memstream(&mut buf, &mut size, file)?;
         };
         self.check_error()?;
 
@@ -882,10 +857,6 @@ impl Augeas {
         } else {
             CommandsNumber::Success(num as u32)
         };
-
-        let mut res = String::new();
-        file.rewind()?;
-        file.read_to_string(&mut res)?;
 
         Ok((commands_num, res))
     }

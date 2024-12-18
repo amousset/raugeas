@@ -48,12 +48,14 @@
 extern crate bitflags;
 
 use raugeas_sys::*;
+use std::borrow::Cow;
 use std::convert::From;
-use std::ffi::CString;
+use std::ffi::{CString, OsStr, OsString};
 use std::fmt::Display;
 use std::mem::transmute;
 use std::ops::Range;
 use std::os::raw::{c_char, c_int};
+use std::os::unix::prelude::{OsStrExt, OsStringExt};
 use std::{fmt, ptr};
 
 pub mod error;
@@ -65,8 +67,8 @@ mod flags;
 pub use self::flags::Flags;
 
 mod util;
-use crate::error::{ErrorPosition, TreeError};
-use crate::util::{new_memstream, read_memstream};
+use crate::error::{ErrorPosition, OsTreeError, TreeError};
+use crate::util::{build_path, new_memstream, ptr_to_os_string, read_memstream};
 use util::ptr_to_string;
 
 /// Shortcut for the result type used in this crate.
@@ -162,14 +164,52 @@ pub struct Span {
     pub filename: Option<String>,
 }
 
-impl Span {
-    fn new() -> Span {
-        Span {
-            label: 0..0,
-            value: 0..0,
-            span: 0..0,
-            filename: None,
-        }
+/// A span in the tree.
+///
+/// The [`span`](#method.span) indicates where in a file a particular node
+/// was found. The `label` and `value` give the character range from which
+/// the node's label and value were read, and `span` gives the entire region
+/// in the file from which the node was constructed. If any of these values are
+/// not available, e.g., because the node has no value, the corresponding range
+/// will be empty.
+///
+/// The `filename` provides the entire path to the file in the file system.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct OsSpan {
+    /// Character range for the label of the node in a file.
+    ///
+    /// Empty if not available.
+    pub label: Range<u32>,
+    /// Character range for the value of the node in a file.
+    ///
+    /// Empty if not available.
+    pub value: Range<u32>,
+    /// Character range for the entire node in a file.
+    //
+    /// Empty if not available.
+    pub span: Range<u32>,
+    /// The path to the file in the file system.
+    ///
+    /// `None` if the node is not associated with a file.
+    pub filename: Option<OsString>,
+}
+
+impl TryFrom<OsSpan> for Span {
+    type Error = Error;
+
+    fn try_from(span: OsSpan) -> std::result::Result<Self, Self::Error> {
+        let filename = match span.filename.map(|f| String::from_utf8(f.into_vec())) {
+            Some(Ok(f)) => Some(f),
+            Some(Err(e)) => return Err(e.into()),
+            None => None,
+        };
+
+        Ok(Span {
+            label: span.label,
+            value: span.value,
+            span: span.span,
+            filename,
+        })
     }
 }
 
@@ -182,6 +222,45 @@ pub struct Attr {
     pub value: Option<String>,
     /// The path of the file the node belongs to, or `None` if the node does not belong to a file.
     pub file_path: Option<String>,
+}
+
+/// Attributes of a node
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct OsAttr {
+    /// The label of the node
+    pub label: Option<OsString>,
+    /// The value of the node
+    pub value: Option<OsString>,
+    /// The path of the file the node belongs to, or `None` if the node does not belong to a file.
+    pub file_path: Option<OsString>,
+}
+
+impl TryFrom<OsAttr> for Attr {
+    type Error = Error;
+
+    fn try_from(attr: OsAttr) -> std::result::Result<Self, Self::Error> {
+        let label = match attr.label.map(|f| String::from_utf8(f.into_vec())) {
+            Some(Ok(f)) => Some(f),
+            Some(Err(e)) => return Err(e.into()),
+            None => None,
+        };
+        let value = match attr.value.map(|f| String::from_utf8(f.into_vec())) {
+            Some(Ok(f)) => Some(f),
+            Some(Err(e)) => return Err(e.into()),
+            None => None,
+        };
+        let file_path = match attr.file_path.map(|f| String::from_utf8(f.into_vec())) {
+            Some(Ok(f)) => Some(f),
+            Some(Err(e)) => return Err(e.into()),
+            None => None,
+        };
+
+        Ok(Attr {
+            label,
+            value,
+            file_path,
+        })
+    }
 }
 
 /// Outcome of a successful `srun` command.
@@ -205,20 +284,24 @@ impl Augeas {
     /// and the directories listed in the environment variable `AUGEAS_LENS_LIB`.
     ///
     /// The `flags` are a bitmask of values from `Flags`.
-    pub fn init<'a>(
-        root: impl Into<Option<&'a str>>,
-        loadpath: &str,
+    pub fn init<T: AsRef<OsStr>, S: AsRef<OsStr>>(
+        root: impl Into<Option<T>>,
+        loadpath: S,
         flags: Flags,
     ) -> Result<Self> {
-        let root = &(match root.into() {
-            Some(root) => Some(CString::new(root)?),
+        let root = &match root.into() {
+            Some(r) => {
+                let r = r.as_ref();
+                Some(CString::new(r.as_bytes())?)
+            }
             None => None,
-        });
+        };
         let root = match root {
-            Some(root) => root.as_ptr(),
+            Some(r) => r.as_ptr(),
             None => ptr::null(),
         };
-        let load_path = &(CString::new(loadpath)?);
+        let load_path = loadpath.as_ref();
+        let load_path = CString::new(load_path.as_bytes())?;
         let load_path = load_path.as_ptr();
 
         // We want to get errors to help the user understand what went wrong if possible.
@@ -252,15 +335,51 @@ impl Augeas {
     /// with a value.
     ///
     /// It is an error if `path` matches more than one node.
-    pub fn get(&self, path: &str) -> Result<Option<String>> {
-        let path = &(CString::new(path)?);
+    pub fn get_os<T: AsRef<OsStr>>(&self, path: T) -> Result<Option<OsString>> {
+        let path = path.as_ref();
+        let path = CString::new(path.as_bytes())?;
         let path = path.as_ptr();
         let mut value: *const c_char = ptr::null_mut();
 
         unsafe { aug_get(self.ptr, path, &mut value) };
         self.check_error()?;
 
-        let value = ptr_to_string(value);
+        let value = ptr_to_os_string(value);
+
+        Ok(value)
+    }
+
+    /// Lookup the value associated with `path`.
+    ///
+    /// Return `None` if there is no value associated with `path` or if no
+    /// node matches `path`, and `Some(value)` if there is exactly one node
+    /// with a value.
+    ///
+    /// It is an error if `path` matches more than one node.
+    pub fn get<T: AsRef<OsStr>>(&self, path: T) -> Result<Option<String>> {
+        match self.get_os(path) {
+            Ok(Some(p)) => Ok(Some(String::from_utf8(p.into_vec())?)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Lookup the label associated with `path`.
+    ///
+    /// Return `Some(label)` if `path` matches a node that has a label, and
+    /// `None` if `path` matches no node, or matches exactly one node
+    /// without a label.
+    ///
+    /// It is an error if `path` matches more than one node.
+    pub fn label_os<T: AsRef<OsStr>>(&self, path: T) -> Result<Option<OsString>> {
+        let path = path.as_ref();
+        let path_c = CString::new(path.as_bytes())?;
+        let mut value: *const c_char = ptr::null();
+
+        unsafe { aug_label(self.ptr, path_c.as_ptr(), &mut value) };
+        self.check_error()?;
+
+        let value = ptr_to_os_string(value);
 
         Ok(value)
     }
@@ -272,25 +391,22 @@ impl Augeas {
     /// without a label.
     ///
     /// It is an error if `path` matches more than one node.
-    pub fn label(&self, path: &str) -> Result<Option<String>> {
-        let path_c = CString::new(path)?;
-        let mut value: *const c_char = ptr::null();
-
-        unsafe { aug_label(self.ptr, path_c.as_ptr(), &mut value) };
-        self.check_error()?;
-
-        let value = ptr_to_string(value);
-
-        Ok(value)
+    pub fn label<T: AsRef<OsStr>>(&self, path: T) -> Result<Option<String>> {
+        match self.label_os(path) {
+            Ok(Some(p)) => Ok(Some(String::from_utf8(p.into_vec())?)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
-    /// Find all nodes matching `path`
+    /// Find all nodes matching `path`.
     ///
     /// Find all nodes matching the path expression `path` and return their
     /// paths in an unambiguous form that can be used with
     /// [`get`](#method.get) to get their value.
-    pub fn matches(&self, path: &str) -> Result<Vec<String>> {
-        let c_path = CString::new(path)?;
+    pub fn matches_os<T: AsRef<OsStr>>(&self, path: T) -> Result<Vec<OsString>> {
+        let path = path.as_ref();
+        let c_path = CString::new(path.as_bytes())?;
 
         unsafe {
             let mut matches_ptr: *mut *mut c_char = ptr::null_mut();
@@ -300,11 +416,11 @@ impl Augeas {
             let matches_vec = (0..num_matches)
                 .map(|i| {
                     let match_ptr: *const c_char = transmute(*matches_ptr.offset(i as isize));
-                    let str = ptr_to_string(match_ptr).unwrap();
+                    let str = ptr_to_os_string(match_ptr).unwrap();
                     libc::free(transmute::<*const i8, *mut libc::c_void>(match_ptr));
                     str
                 })
-                .collect::<Vec<String>>();
+                .collect::<Vec<OsString>>();
 
             libc::free(transmute::<*mut *mut i8, *mut libc::c_void>(matches_ptr));
 
@@ -312,12 +428,33 @@ impl Augeas {
         }
     }
 
+    /// Find all nodes matching `path`.
+    ///
+    /// Same as `matches`, but returns a `String`. Fails on non-UTF-8 values.
+    ///
+    /// Find all nodes matching the path expression `path` and return their
+    /// paths in an unambiguous form that can be used with
+    /// [`get`](#method.get) to get their value.
+    pub fn matches<T: AsRef<OsStr>>(&self, path: T) -> Result<Vec<String>> {
+        match self.matches_os(path) {
+            Ok(matches) => {
+                let matches = matches
+                    .into_iter()
+                    .map(|m| String::from_utf8(m.into_vec()).map_err(|e| e.into()))
+                    .collect::<Result<Vec<String>>>()?;
+                Ok(matches)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// Count the nodes matching `path`
     ///
     /// Find all nodes matching the path expression `path` and return how
     /// many there are.
-    pub fn count(&self, path: &str) -> Result<u32> {
-        let path = CString::new(path)?;
+    pub fn count<T: AsRef<OsStr>>(&self, path: T) -> Result<u32> {
+        let path = path.as_ref();
+        let path = CString::new(path.as_bytes())?;
 
         let r = unsafe { aug_match(self.ptr, path.as_ptr(), ptr::null_mut()) };
         self.check_error()?;
@@ -353,7 +490,10 @@ impl Augeas {
     /// `path`.
     ///
     /// It is an error if more than one node matches `path`
-    pub fn set(&mut self, path: &str, value: &str) -> Result<()> {
+    pub fn set<T: AsRef<OsStr>, S: AsRef<OsStr>>(&mut self, path: T, value: S) -> Result<()> {
+        let path = path.as_ref();
+        let value = value.as_ref();
+
         let path_c = CString::new(path.as_bytes())?;
         let value_c = CString::new(value.as_bytes())?;
 
@@ -370,7 +510,15 @@ impl Augeas {
     /// It is an error if `path` matches no nodes, or more than one
     /// node. The `label` must not contain a `/`, `*` or end with a
     /// bracketed index `[N]`.
-    pub fn insert(&mut self, path: &str, label: &str, pos: Position) -> Result<()> {
+    pub fn insert<T: AsRef<OsStr>, S: AsRef<OsStr>>(
+        &mut self,
+        path: T,
+        label: S,
+        pos: Position,
+    ) -> Result<()> {
+        let path = path.as_ref();
+        let label = label.as_ref();
+
         let path = CString::new(path.as_bytes())?;
         let label = CString::new(label.as_bytes())?;
 
@@ -382,7 +530,8 @@ impl Augeas {
 
     /// Remove `path` and all its children and return the number of nodes
     /// removed.
-    pub fn rm(&mut self, path: &str) -> Result<u32> {
+    pub fn rm<T: AsRef<OsStr>>(&mut self, path: T) -> Result<u32> {
+        let path = path.as_ref();
         let path = CString::new(path.as_bytes())?;
         let r = unsafe { aug_rm(self.ptr, path.as_ptr()) };
         self.check_error()?;
@@ -403,9 +552,12 @@ impl Augeas {
     /// Note that the node `src` always becomes the node `dst`: when you move `/a/b`
     /// to `/x`, the node `/a/b` is now called `/x`, no matter whether `/x` existed
     /// initially or not.
-    pub fn mv(&mut self, src: &str, dst: &str) -> Result<()> {
-        let src = CString::new(src)?;
-        let dst = CString::new(dst)?;
+    pub fn mv<T: AsRef<OsStr>, S: AsRef<OsStr>>(&mut self, src: T, dst: S) -> Result<()> {
+        let src = src.as_ref();
+        let dst = dst.as_ref();
+
+        let src = CString::new(src.as_bytes())?;
+        let dst = CString::new(dst.as_bytes())?;
 
         unsafe { aug_mv(self.ptr, src.as_ptr(), dst.as_ptr()) };
         self.check_error()?;
@@ -420,9 +572,12 @@ impl Augeas {
     ///
     /// Path variables can be used in path expressions later on by prefixing
     /// them with '$'.
-    pub fn defvar(&mut self, name: &str, expr: &str) -> Result<()> {
-        let name = CString::new(name)?;
-        let expr = CString::new(expr)?;
+    pub fn defvar<T: AsRef<OsStr>, S: AsRef<OsStr>>(&mut self, name: T, expr: S) -> Result<()> {
+        let name = name.as_ref();
+        let expr = expr.as_ref();
+
+        let name = CString::new(name.as_bytes())?;
+        let expr = CString::new(expr.as_bytes())?;
 
         unsafe { aug_defvar(self.ptr, name.as_ptr(), expr.as_ptr()) };
         self.check_error()?;
@@ -433,8 +588,9 @@ impl Augeas {
     /// Remove the variable `name`.
     ///
     /// It is not an error if the variable does not exist.
-    pub fn rmvar(&mut self, name: &str) -> Result<()> {
-        let name = CString::new(name)?;
+    pub fn rmvar<T: AsRef<OsStr>>(&mut self, name: T) -> Result<()> {
+        let name = name.as_ref();
+        let name = CString::new(name.as_bytes())?;
 
         unsafe { aug_defvar(self.ptr, name.as_ptr(), ptr::null_mut()) };
         self.check_error()?;
@@ -453,10 +609,19 @@ impl Augeas {
     ///
     /// If a node was created, the method returns `true`, and `false` if no
     /// node was created.
-    pub fn defnode(&mut self, name: &str, expr: &str, value: &str) -> Result<bool> {
-        let name = CString::new(name)?;
-        let expr = CString::new(expr)?;
-        let value = CString::new(value)?;
+    pub fn defnode<T: AsRef<OsStr>, S: AsRef<OsStr>, V: AsRef<OsStr>>(
+        &mut self,
+        name: T,
+        expr: S,
+        value: V,
+    ) -> Result<bool> {
+        let name = name.as_ref();
+        let expr = expr.as_ref();
+        let value = value.as_ref();
+
+        let name = CString::new(name.as_bytes())?;
+        let expr = CString::new(expr.as_bytes())?;
+        let value = CString::new(value.as_bytes())?;
         let mut cr: i32 = 0;
 
         unsafe {
@@ -511,10 +676,19 @@ impl Augeas {
     /// Set the value of multiple nodes in one operation. Find or create a node
     /// matching `sub` by interpreting `sub` as a path expression relative to each
     /// node matching `base`.
-    pub fn setm(&mut self, base: &str, sub: &str, value: &str) -> Result<u32> {
-        let base = CString::new(base)?;
-        let sub = CString::new(sub)?;
-        let value = CString::new(value)?;
+    pub fn setm<T: AsRef<OsStr>, S: AsRef<OsStr>, V: AsRef<OsStr>>(
+        &mut self,
+        base: T,
+        sub: S,
+        value: V,
+    ) -> Result<u32> {
+        let base = base.as_ref();
+        let sub = sub.as_ref();
+        let value = value.as_ref();
+
+        let base = CString::new(base.as_bytes())?;
+        let sub = CString::new(sub.as_bytes())?;
+        let value = CString::new(value.as_bytes())?;
 
         let r = unsafe { aug_setm(self.ptr, base.as_ptr(), sub.as_ptr(), value.as_ptr()) };
         self.check_error()?;
@@ -524,10 +698,12 @@ impl Augeas {
 
     /// Get the span according to the input file of the node associated with `path`. If
     /// the node is associated with a file, the span is returned.
-    pub fn span(&self, path: &str) -> Result<Option<Span>> {
-        let path = CString::new(path)?;
+    pub fn span_os<T: AsRef<OsStr>>(&self, path: T) -> Result<Option<OsSpan>> {
+        let path = path.as_ref();
+
+        let path = CString::new(path.as_bytes())?;
         let mut filename: *mut c_char = ptr::null_mut();
-        let mut result = Span::new();
+        let mut result = OsSpan::default();
 
         unsafe {
             aug_span(
@@ -550,24 +726,45 @@ impl Augeas {
         }
         self.check_error()?;
 
-        result.filename = ptr_to_string(filename);
+        result.filename = ptr_to_os_string(filename);
         unsafe { libc::free(filename as *mut libc::c_void) };
         Ok(Some(result))
+    }
+
+    /// Get the span according to the input file of the node associated with `path`. If
+    /// the node is associated with a file, the span is returned.
+    pub fn span<T: AsRef<OsStr>>(&self, path: T) -> Result<Option<Span>> {
+        match self.span_os(path) {
+            Ok(Some(s)) => Ok(Some(s.try_into()?)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
     /// Use the value of node `node` as a string and transform it into a tree
     /// using the lens `lens` and store it in the tree at `path`, which will be
     /// overwritten. `path` and `node` are path expressions.
-    pub fn text_store(&mut self, lens: &str, node: &str, path: &str) -> Result<()> {
-        let lens = CString::new(lens)?;
-        let node = CString::new(node)?;
-        let c_path = CString::new(path)?;
+    pub fn text_store<T: AsRef<OsStr>, S: AsRef<OsStr>, V: AsRef<OsStr>>(
+        &mut self,
+        lens: T,
+        node: S,
+        path: V,
+    ) -> Result<()> {
+        let lens = lens.as_ref();
+        let node = node.as_ref();
+        let path = path.as_ref();
+
+        let lens = CString::new(lens.as_bytes())?;
+        let node = CString::new(node.as_bytes())?;
+        let c_path = CString::new(path.as_bytes())?;
 
         unsafe { aug_text_store(self.ptr, lens.as_ptr(), node.as_ptr(), c_path.as_ptr()) };
         self.check_error()?;
 
-        let err_path = format!("/augeas/text{}", path);
-        self.check_tree_error(err_path.as_str())?;
+        let mut err_path = OsString::from("/augeas/text");
+        err_path.push(path);
+
+        self.check_tree_error(err_path)?;
 
         Ok(())
     }
@@ -575,17 +772,22 @@ impl Augeas {
     /// Transform the tree at `path` into a string using lens `lens` and store it in
     /// the node `node_out`, assuming the tree was initially generated using the
     /// value of node `node_in`. `path`, `node_in` and `node_out` are path expressions.
-    pub fn text_retrieve(
+    pub fn text_retrieve<T: AsRef<OsStr>, S: AsRef<OsStr>, V: AsRef<OsStr>, R: AsRef<OsStr>>(
         &mut self,
-        lens: &str,
-        node_in: &str,
-        path: &str,
-        node_out: &str,
+        lens: T,
+        node_in: S,
+        path: V,
+        node_out: R,
     ) -> Result<()> {
-        let lens = CString::new(lens)?;
-        let node_in = CString::new(node_in)?;
-        let c_path = CString::new(path)?;
-        let node_out = CString::new(node_out)?;
+        let lens = lens.as_ref();
+        let node_in = node_in.as_ref();
+        let path = path.as_ref();
+        let node_out = node_out.as_ref();
+
+        let lens = CString::new(lens.as_bytes())?;
+        let node_in = CString::new(node_in.as_bytes())?;
+        let c_path = CString::new(path.as_bytes())?;
+        let node_out = CString::new(node_out.as_bytes())?;
 
         unsafe {
             aug_text_retrieve(
@@ -597,8 +799,11 @@ impl Augeas {
             )
         };
         self.check_error()?;
-        let err_path = format!("/augeas/text{}", path);
-        self.check_tree_error(err_path.as_str())?;
+
+        let mut err_path = OsString::from("/augeas/text");
+        err_path.push(path);
+
+        self.check_tree_error(err_path)?;
 
         Ok(())
     }
@@ -606,9 +811,12 @@ impl Augeas {
     /// Rename the label of all nodes matching SRC to LBL.
     ///
     /// Returns the number of nodes renamed.
-    pub fn rename(&mut self, src: &str, lbl: &str) -> Result<u32> {
-        let src = CString::new(src)?;
-        let lbl = CString::new(lbl)?;
+    pub fn rename<T: AsRef<OsStr>, S: AsRef<OsStr>>(&mut self, src: T, lbl: S) -> Result<u32> {
+        let src = src.as_ref();
+        let lbl = lbl.as_ref();
+
+        let src = CString::new(src.as_bytes())?;
+        let lbl = CString::new(lbl.as_bytes())?;
 
         let r = unsafe { aug_rename(self.ptr, src.as_ptr(), lbl.as_ptr()) };
         self.check_error()?;
@@ -621,9 +829,17 @@ impl Augeas {
     /// `excl` specifies if this the file is to be included or excluded from the `lens`.
     /// The `lens` may be a module name, or a full lens name.
     //  If a module name is given, then lns will be the lens assumed.
-    pub fn transform(&mut self, lens: &str, file: &str, excl: bool) -> Result<()> {
-        let lens = CString::new(lens)?;
-        let file = CString::new(file)?;
+    pub fn transform<T: AsRef<OsStr>, S: AsRef<OsStr>>(
+        &mut self,
+        lens: T,
+        file: S,
+        excl: bool,
+    ) -> Result<()> {
+        let lens = lens.as_ref();
+        let file = file.as_ref();
+
+        let lens = CString::new(lens.as_bytes())?;
+        let file = CString::new(file.as_bytes())?;
 
         unsafe { aug_transform(self.ptr, lens.as_ptr(), file.as_ptr(), excl as i32) };
         self.check_error()?;
@@ -638,9 +854,12 @@ impl Augeas {
     /// exist yet. If `dst` exists already, it and all its descendants are
     /// deleted. If `dst` does not exist yet, it and all its missing ancestors are
     /// created.
-    pub fn cp(&mut self, src: &str, dst: &str) -> Result<()> {
-        let src = CString::new(src)?;
-        let dst = CString::new(dst)?;
+    pub fn cp<T: AsRef<OsStr>, S: AsRef<OsStr>>(&mut self, src: T, dst: S) -> Result<()> {
+        let src = src.as_ref();
+        let dst = dst.as_ref();
+
+        let src = CString::new(src.as_bytes())?;
+        let dst = CString::new(dst.as_bytes())?;
 
         unsafe { aug_cp(self.ptr, src.as_ptr(), dst.as_ptr()) };
         self.check_error()?;
@@ -656,17 +875,34 @@ impl Augeas {
     /// too.
     ///
     /// Returns `None` if `inp` does not need any escaping at all.
-    pub fn escape_name(&self, inp: &str) -> Result<Option<String>> {
-        let inp = CString::new(inp)?;
+    pub fn escape_name_os<T: AsRef<OsStr>>(&self, inp: T) -> Result<Option<OsString>> {
+        let inp = inp.as_ref();
+        let inp = CString::new(inp.as_bytes())?;
         let mut out: *mut c_char = ptr::null_mut();
 
         unsafe { aug_escape_name(self.ptr, inp.as_ptr(), &mut out) };
 
-        let s = ptr_to_string(out);
+        let s = ptr_to_os_string(out);
         unsafe { libc::free(out as *mut libc::c_void) };
         self.check_error()?;
 
         Ok(s)
+    }
+
+    /// Escape special characters in a string such that it can be used as part
+    /// of a path expressions and only matches a node named exactly
+    /// `inp`. Characters that have special meanings in path expressions, such as
+    /// `[` and `]` are prefixed with a `\\`. Note that this function assumes
+    /// that it is passed a name, not a path, and will therefore escape `/`,
+    /// too.
+    ///
+    /// Returns `None` if `inp` does not need any escaping at all.
+    pub fn escape_name<T: AsRef<OsStr>>(&self, inp: T) -> Result<Option<String>> {
+        match self.escape_name_os(inp) {
+            Ok(Some(p)) => Ok(Some(String::from_utf8(p.into_vec())?)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
     /// Load a `file` using the lens that would ordinarily be used by `load`,
@@ -674,8 +910,9 @@ impl Augeas {
     /// `load`, this function returns successfully even if `file` does not exist
     /// or if the `file` cannot be processed by the associated lens. It is an
     /// error though if no lens can be found to process `file`.
-    pub fn load_file(&mut self, file: &str) -> Result<()> {
-        let file = CString::new(file)?;
+    pub fn load_file<T: AsRef<OsStr>>(&mut self, file: T) -> Result<()> {
+        let file = file.as_ref();
+        let file = CString::new(file.as_bytes())?;
 
         unsafe { aug_load_file(self.ptr, file.as_ptr()) };
         self.check_error()?;
@@ -689,13 +926,44 @@ impl Augeas {
     /// Returns `None` if `path` does not match any nodes.
     ///
     /// It is an error if `path` matches more than one node.
-    pub fn source(&self, path: &str) -> Result<Option<String>> {
-        let path = CString::new(path)?;
+    pub fn source_os<T: AsRef<OsStr>>(&self, path: T) -> Result<Option<OsString>> {
+        let path = path.as_ref();
+        let path = CString::new(path.as_bytes())?;
         let mut file_path: *mut c_char = ptr::null_mut();
 
         unsafe { aug_source(self.ptr, path.as_ptr(), &mut file_path) };
-        let s = ptr_to_string(file_path);
+        let s = ptr_to_os_string(file_path);
         unsafe { libc::free(file_path as *mut libc::c_void) };
+        self.check_error()?;
+
+        Ok(s)
+    }
+
+    /// For the node matching `path`, return the path to the node representing the
+    /// file to which `path` belongs.
+    ///
+    /// Returns `None` if `path` does not match any nodes.
+    ///
+    /// It is an error if `path` matches more than one node.
+    pub fn source<T: AsRef<OsStr>>(&self, path: T) -> Result<Option<String>> {
+        match self.source_os(path) {
+            Ok(Some(p)) => Ok(Some(String::from_utf8(p.into_vec())?)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Return the contents of the file that would be written for the file associated with `path`.
+    //  If there is no file corresponding to `path`, it returns `None`.
+    pub fn preview_os<T: AsRef<OsStr>>(&self, path: T) -> Result<Option<OsString>> {
+        let path = path.as_ref();
+        let path = CString::new(path.as_bytes())?;
+        let mut out: *mut c_char = ptr::null_mut();
+
+        unsafe { aug_preview(self.ptr, path.as_ptr(), &mut out) };
+
+        let s = ptr_to_os_string(out);
+        unsafe { libc::free(out as *mut libc::c_void) };
         self.check_error()?;
 
         Ok(s)
@@ -703,17 +971,12 @@ impl Augeas {
 
     /// Return the contents of the file that would be written for the file associated with `path`.
     //  If there is no file corresponding to `path`, it returns `None`.
-    pub fn preview(&self, path: &str) -> Result<Option<String>> {
-        let path = CString::new(path)?;
-        let mut out: *mut c_char = ptr::null_mut();
-
-        unsafe { aug_preview(self.ptr, path.as_ptr(), &mut out) };
-
-        let s = ptr_to_string(out);
-        unsafe { libc::free(out as *mut libc::c_void) };
-        self.check_error()?;
-
-        Ok(s)
+    pub fn preview<T: AsRef<OsStr>>(&self, path: T) -> Result<Option<String>> {
+        match self.preview_os(path) {
+            Ok(Some(p)) => Ok(Some(String::from_utf8(p.into_vec())?)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
     /// Look up the `i`th node in the variable `var` and retrieve information about
@@ -724,8 +987,9 @@ impl Augeas {
     ///
     /// If `var` does not exist, or is not a nodeset, or if it has fewer than `i`
     /// nodes, this call fails.
-    pub fn ns_attr(&self, var: &str, i: u32) -> Result<Attr> {
-        let var = CString::new(var)?;
+    pub fn ns_attr_os<T: AsRef<OsStr>>(&self, var: T, i: u32) -> Result<OsAttr> {
+        let var = var.as_ref();
+        let var = CString::new(var.as_bytes())?;
 
         let mut value: *const c_char = ptr::null_mut();
         let mut label: *const c_char = ptr::null_mut();
@@ -745,10 +1009,10 @@ impl Augeas {
             self.check_error()?;
         }
 
-        let attr = Attr {
-            label: ptr_to_string(label),
-            value: ptr_to_string(value),
-            file_path: ptr_to_string(file_path),
+        let attr = OsAttr {
+            label: ptr_to_os_string(label),
+            value: ptr_to_os_string(value),
+            file_path: ptr_to_os_string(file_path),
         };
 
         unsafe { libc::free(file_path as *mut libc::c_void) };
@@ -757,9 +1021,25 @@ impl Augeas {
         Ok(attr)
     }
 
+    /// Look up the `i`th node in the variable `var` and retrieve information about
+    /// it.
+    ///
+    /// It is assumed that `var` was defined with a path expression evaluating to
+    /// a nodeset, like `/files/etc/hosts//*`.
+    ///
+    /// If `var` does not exist, or is not a nodeset, or if it has fewer than `i`
+    /// nodes, this call fails.
+    pub fn ns_attr<T: AsRef<OsStr>>(&self, var: T, i: u32) -> Result<Attr> {
+        match self.ns_attr_os(var, i) {
+            Ok(a) => Ok(a.try_into()?),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Look up the label among its siblings for the `i`th node in the variable `var`.
-    pub fn ns_label(&self, var: &str, i: u32) -> Result<String> {
-        let var = CString::new(var)?;
+    pub fn ns_label_os<T: AsRef<OsStr>>(&self, var: T, i: u32) -> Result<OsString> {
+        let var = var.as_ref();
+        let var = CString::new(var.as_bytes())?;
 
         let mut label: *const c_char = ptr::null_mut();
 
@@ -776,9 +1056,17 @@ impl Augeas {
             self.check_error()?;
         }
 
-        match ptr_to_string(label) {
+        match ptr_to_os_string(label) {
             Some(label) => Ok(label),
             None => Err(Error::from(ErrorCode::NoMatch)),
+        }
+    }
+
+    /// Look up the label among its siblings for the `i`th node in the variable `var`.
+    pub fn ns_label<T: AsRef<OsStr>>(&self, var: T, i: u32) -> Result<String> {
+        match self.ns_label_os(var, i) {
+            Ok(p) => Ok(String::from_utf8(p.into_vec())?),
+            Err(e) => Err(e),
         }
     }
 
@@ -787,8 +1075,9 @@ impl Augeas {
     /// The `index` will be set to the number of siblings + 1 of the node `var[i+1]` that precede it.
     /// If the node `var[i+1]` does not have any siblings with the same label as
     //  itself, `index` will be set to 0.
-    pub fn ns_index(&self, var: &str, i: u32) -> Result<u32> {
-        let var = CString::new(var)?;
+    pub fn ns_index<T: AsRef<OsStr>>(&self, var: T, i: u32) -> Result<u32> {
+        let var = var.as_ref();
+        let var = CString::new(var.as_bytes())?;
 
         let mut index: c_int = 0;
 
@@ -807,20 +1096,31 @@ impl Augeas {
     }
 
     /// Look up the value of the `i`th node in variable `var`.
-    pub fn ns_value(&self, var: &str, i: u32) -> Result<Option<String>> {
-        let var = CString::new(var)?;
+    pub fn ns_value_os<T: AsRef<OsStr>>(&self, var: T, i: u32) -> Result<Option<OsString>> {
+        let var = var.as_ref();
+        let var = CString::new(var.as_bytes())?;
 
         let mut value: *const c_char = ptr::null_mut();
         unsafe { aug_ns_value(self.ptr, var.as_ptr(), i as c_int, &mut value) };
 
         self.check_error()?;
 
-        Ok(ptr_to_string(value))
+        Ok(ptr_to_os_string(value))
+    }
+
+    /// Look up the value of the `i`th node in variable `var`.
+    pub fn ns_value<T: AsRef<OsStr>>(&self, var: T, i: u32) -> Result<Option<String>> {
+        match self.ns_value_os(var, i) {
+            Ok(Some(p)) => Ok(Some(String::from_utf8(p.into_vec())?)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
     /// Return the number of nodes in variable `var`.
-    pub fn ns_count(&self, var: &str) -> Result<u32> {
-        let var = CString::new(var)?;
+    pub fn ns_count<T: AsRef<OsStr>>(&self, var: T) -> Result<u32> {
+        let var = var.as_ref();
+        let var = CString::new(var.as_bytes())?;
 
         let rc = unsafe { aug_ns_count(self.ptr, var.as_ptr()) };
         self.check_error()?;
@@ -829,13 +1129,14 @@ impl Augeas {
     }
 
     /// Get the fully qualified path to the `i`th node in `var`.
-    pub fn ns_path(&self, var: &str, i: u32) -> Result<Option<String>> {
-        let var = CString::new(var)?;
+    pub fn ns_path_os<T: AsRef<OsStr>>(&self, var: T, i: u32) -> Result<Option<OsString>> {
+        let var = var.as_ref();
+        let var = CString::new(var.as_bytes())?;
 
         let mut path: *mut c_char = ptr::null_mut();
 
         unsafe { aug_ns_path(self.ptr, var.as_ptr(), i as c_int, &mut path) };
-        let p = ptr_to_string(path);
+        let p = ptr_to_os_string(path);
         unsafe { libc::free(path as *mut libc::c_void) };
 
         self.check_error()?;
@@ -843,9 +1144,19 @@ impl Augeas {
         Ok(p)
     }
 
+    /// Get the fully qualified path to the `i`th node in `var`.
+    pub fn ns_path<T: AsRef<OsStr>>(&self, var: T, i: u32) -> Result<Option<String>> {
+        match self.ns_path_os(var, i) {
+            Ok(Some(p)) => Ok(Some(String::from_utf8(p.into_vec())?)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Print each node matching `path` and its descendants.
-    pub fn print(&self, path: &str) -> Result<String> {
-        let path = CString::new(path)?;
+    pub fn print_os<T: AsRef<OsStr>>(&self, path: T) -> Result<OsString> {
+        let path = path.as_ref();
+        let path = CString::new(path.as_bytes())?;
         let res;
 
         unsafe {
@@ -860,14 +1171,23 @@ impl Augeas {
         Ok(res)
     }
 
+    /// Print each node matching `path` and its descendants.
+    pub fn print<T: AsRef<OsStr>>(&self, path: T) -> Result<String> {
+        match self.print_os(path) {
+            Ok(p) => Ok(String::from_utf8(p.into_vec())?),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Run one or more newline-separated commands.
     ///
     /// The output of the commands
     /// will be returned as a `String`. Running just 'help' will print what commands are
     /// available. Commands accepted by this are identical to what `augtool`
     /// accepts.
-    pub fn srun(&self, commands: &str) -> Result<(CommandsNumber, String)> {
-        let commands = CString::new(commands)?;
+    pub fn srun_os<T: AsRef<OsStr>>(&self, commands: T) -> Result<(CommandsNumber, OsString)> {
+        let commands = commands.as_ref();
+        let commands = CString::new(commands.as_bytes())?;
 
         let res;
         let num;
@@ -892,6 +1212,19 @@ impl Augeas {
         Ok((commands_num, res))
     }
 
+    /// Run one or more newline-separated commands.
+    ///
+    /// The output of the commands
+    /// will be returned as a `String`. Running just 'help' will print what commands are
+    /// available. Commands accepted by this are identical to what `augtool`
+    /// accepts.
+    pub fn srun<T: AsRef<OsStr>>(&self, commands: T) -> Result<(CommandsNumber, String)> {
+        match self.srun_os(commands) {
+            Ok((num, p)) => Ok((num, String::from_utf8(p.into_vec())?)),
+            Err(e) => Err(e),
+        }
+    }
+
     fn check_error(&self) -> std::result::Result<(), AugeasError> {
         self.error().map(Err).unwrap_or(Ok(()))
     }
@@ -913,11 +1246,12 @@ impl Augeas {
 
     /// Set the behavior of the save operation.
     pub fn set_save_mode(&mut self, mode: SaveMode) -> Result<()> {
-        self.set("/augeas/save", &mode.to_string())
+        self.set("/augeas/save", mode.to_string())
     }
 
-    fn check_tree_error(&self, path: &str) -> Result<()> {
-        match self.tree_error(path)? {
+    fn check_tree_error<T: AsRef<OsStr>>(&self, path: T) -> Result<()> {
+        let path = path.as_ref();
+        match self.tree_error_os(path)? {
             Some(e) => Err(e.into()),
             None => Ok(()),
         }
@@ -930,31 +1264,33 @@ impl Augeas {
     /// * `/augeas/FILENAME` if the error happened for a file, or
     /// * `/augeas/text/PATH` otherwise. `PATH` is the path to the toplevel node in
     ///   the tree where the lens application happened.
-    pub fn tree_error(&self, err_path: &str) -> Result<Option<TreeError>> {
+    pub fn tree_error_os<T: AsRef<OsStr>>(&self, err_path: T) -> Result<Option<OsTreeError>> {
+        let err_path = err_path.as_ref();
+
         // For convenience, also accept paths containing "/error"
-        let err_path = if err_path.ends_with("/error") {
-            err_path.to_string()
+        let err_path = if err_path.to_string_lossy().ends_with("/error") {
+            Cow::Borrowed(err_path)
         } else {
-            format!("{}/error", err_path)
+            Cow::Owned(build_path(err_path, "/error"))
         };
         let err = self.get(&err_path)?;
         if let Some(kind) = err {
             let message = self
-                .get(&format!("{}/message", err_path))?
+                .get_os(build_path(&err_path, "/message"))?
                 .unwrap_or_default();
-            let path = self.get(&format!("{}/path", err_path))?;
-            let lens = self.get(&format!("{}/lens", err_path))?;
+            let path = self.get_os(build_path(&err_path, "/path"))?;
+            let lens = self.get(build_path(&err_path, "/lens"))?;
 
             // These 3 are set together or not at all
             let pos: Option<usize> = self
-                .get(&format!("{}/pos", err_path))?
-                .and_then(|s| s.parse().ok());
+                .get_os(build_path(&err_path, "/pos"))?
+                .and_then(|s| s.to_string_lossy().parse().ok());
             let line: Option<usize> = self
-                .get(&format!("{}/line", err_path))?
-                .and_then(|s| s.parse().ok());
+                .get_os(build_path(&err_path, "/line"))?
+                .and_then(|s| s.to_string_lossy().parse().ok());
             let char: Option<usize> = self
-                .get(&format!("{}/char", err_path))?
-                .and_then(|s| s.parse().ok());
+                .get_os(build_path(&err_path, "/char"))?
+                .and_then(|s| s.to_string_lossy().parse().ok());
             let position = match (pos, line, char) {
                 (Some(position), Some(line), Some(char)) => Some(ErrorPosition {
                     position,
@@ -964,7 +1300,7 @@ impl Augeas {
                 _ => None,
             };
 
-            Ok(Some(TreeError {
+            Ok(Some(OsTreeError {
                 kind,
                 message,
                 path,
@@ -973,6 +1309,21 @@ impl Augeas {
             }))
         } else {
             Ok(None)
+        }
+    }
+
+    /// Try to read error information about a given path.
+    ///
+    /// Use either:
+    ///
+    /// * `/augeas/FILENAME` if the error happened for a file, or
+    /// * `/augeas/text/PATH` otherwise. `PATH` is the path to the toplevel node in
+    ///   the tree where the lens application happened.
+    pub fn tree_error<T: AsRef<OsStr>>(&self, err_path: T) -> Result<Option<TreeError>> {
+        match self.tree_error_os(err_path) {
+            Ok(Some(e)) => Ok(Some(e.into())),
+            Ok(None) => Ok(None),
+            Err(e) => Err(e),
         }
     }
 }
@@ -1017,6 +1368,22 @@ mod tests {
         } else {
             panic!("Unexpected value: {:?}", many)
         }
+    }
+
+    #[test]
+    fn get_nonutf8_test() {
+        let invalid: &[u8; 2] = &[0xc3, 0x28];
+        let invalid = OsStr::from_bytes(invalid);
+        dbg!(invalid);
+
+        let mut aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+
+        aug.set("etc/passwd/root/home", invalid).unwrap();
+
+        let home = aug.get_os("etc/passwd/root/home").unwrap().unwrap();
+        assert_eq!(invalid, home);
+        assert!(dbg!(aug.get("etc/passwd/root/home")).is_err());
+        assert!(aug.get("etc/passwd/root/uid").is_ok());
     }
 
     #[test]
@@ -1173,6 +1540,7 @@ mod tests {
             .unwrap();
 
         if let Error::Tree(e) = err {
+            let e: TreeError = e.into();
             assert_eq!("/stored/stored/alex", e.path.unwrap().as_str());
             assert_eq!(None, e.position);
             assert_eq!("put_failed", e.kind);
@@ -1188,6 +1556,7 @@ mod tests {
             .err()
             .unwrap();
         if let Error::Tree(e) = err {
+            let e: TreeError = e.into();
             assert_eq!(e.message, "Iterated lens matched less than it should");
             assert_eq!(
                 ErrorPosition {
@@ -1273,9 +1642,7 @@ mod tests {
         let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
 
         let s = aug.source("etc/passwd/root/uid").unwrap();
-        // s should be Some("/files/etc/passwd") but Augeas versions before
-        // 1.11 had a bug that makes the result always None
-        assert!(s.is_none() || s.unwrap() == "/files/etc/passwd")
+        assert_eq!(s.unwrap(), "/files/etc/passwd")
     }
 
     #[test]

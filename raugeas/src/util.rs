@@ -1,7 +1,16 @@
 use libc::c_char;
-use std::ffi::CStr;
+use std::ffi::{CStr, OsStr, OsString};
 use std::intrinsics::transmute;
+use std::os::unix::prelude::OsStrExt;
 use std::{io, slice};
+
+use crate::Result;
+
+pub fn build_path<T: AsRef<OsStr>, S: AsRef<OsStr>>(prefix: T, suffix: S) -> OsString {
+    let mut path = prefix.as_ref().to_os_string();
+    path.push(suffix.as_ref());
+    path
+}
 
 pub fn ptr_to_string(s: *const c_char) -> Option<String> {
     if s.is_null() {
@@ -13,11 +22,22 @@ pub fn ptr_to_string(s: *const c_char) -> Option<String> {
     }
 }
 
+pub fn ptr_to_os_string(s: *const c_char) -> Option<OsString> {
+    if s.is_null() {
+        None
+    } else {
+        let s = unsafe { CStr::from_ptr(s) };
+        let s = OsStr::from_bytes(s.to_bytes());
+        let s = s.to_os_string();
+        Some(s)
+    }
+}
+
 /// Helper for functions writing in a FILE, returning the output as a String.
 pub(crate) unsafe fn new_memstream(
     buf: *mut *mut c_char,
     size: *mut usize,
-) -> crate::Result<*mut libc::FILE> {
+) -> Result<*mut libc::FILE> {
     let out = libc::open_memstream(buf, size);
     if out.is_null() {
         return Err(io::Error::last_os_error().into());
@@ -29,7 +49,7 @@ pub(crate) unsafe fn read_memstream(
     buf: *mut *mut c_char,
     size: *mut usize,
     out: *mut libc::FILE,
-) -> crate::Result<String> {
+) -> Result<OsString> {
     assert!(
         !buf.is_null() && !size.is_null() && !out.is_null(),
         "Invalid read_memstream arguments"
@@ -42,7 +62,8 @@ pub(crate) unsafe fn read_memstream(
     let b_slice: &[u8] = transmute(slice::from_raw_parts(*buf, *size + 1));
     let res_out =
         CStr::from_bytes_with_nul(b_slice).expect("Invalid buffer content from open_memstream");
-    let res = res_out.to_string_lossy().to_string();
+    let res_out = OsStr::from_bytes(res_out.to_bytes());
+    let res = res_out.to_os_string();
 
     // We are responsible for freeing the buffer we got from `open_memstream`.
     libc::free(*buf as *mut libc::c_void);
@@ -102,7 +123,7 @@ mod tests {
             let mut size = 0;
             let file = new_memstream(&mut buf, &mut size).unwrap();
             let res = read_memstream(&mut buf, &mut size, file).unwrap();
-            assert_eq!(res, "".to_string());
+            assert_eq!(res, OsString::from(""));
         }
     }
 }

@@ -1,7 +1,8 @@
 //! Error types for the library
 
 use raugeas_sys::*;
-use std::ffi::NulError;
+use std::ffi::{NulError, OsString};
+use std::string::FromUtf8Error;
 use std::{fmt, io};
 
 /// Represents possible errors that can occur.
@@ -11,9 +12,11 @@ pub enum Error {
     /// Augeas error
     Augeas(AugeasError),
     /// Error read from the tree
-    Tree(Box<TreeError>),
+    Tree(Box<OsTreeError>),
     /// Unexpected nul character
     Nul(NulError),
+    /// Error reading a string as UTF-8
+    Utf8(FromUtf8Error),
     /// I/O error
     IO(io::Error),
 }
@@ -25,6 +28,7 @@ impl fmt::Display for Error {
         match *self {
             Error::Augeas(ref err) => err.fmt(f),
             Error::Nul(ref err) => err.fmt(f),
+            Error::Utf8(ref err) => err.fmt(f),
             Error::Tree(ref err) => err.fmt(f),
             Error::IO(ref err) => err.fmt(f),
         }
@@ -94,14 +98,20 @@ impl From<NulError> for Error {
     }
 }
 
+impl From<FromUtf8Error> for Error {
+    fn from(err: FromUtf8Error) -> Error {
+        Error::Utf8(err)
+    }
+}
+
 impl From<AugeasError> for Error {
     fn from(err: AugeasError) -> Error {
         Error::Augeas(err)
     }
 }
 
-impl From<TreeError> for Error {
-    fn from(err: TreeError) -> Error {
+impl From<OsTreeError> for Error {
+    fn from(err: OsTreeError) -> Error {
         Error::Tree(Box::new(err))
     }
 }
@@ -208,6 +218,45 @@ pub struct ErrorPosition {
 /// `/augeas/text/PATH` otherwise. `PATH` is the path to the toplevel node in
 /// the tree where the lens application happened.
 #[derive(Clone, PartialEq, Debug)]
+pub struct OsTreeError {
+    /// Error kind
+    pub kind: String,
+    /// Human-readable error message
+    pub message: OsString,
+    /// Path to tree node where error occurred
+    pub path: Option<OsString>,
+    /// Position in the file where error occurred
+    pub position: Option<ErrorPosition>,
+    /// The lens where the error occurred
+    pub lens: Option<String>,
+}
+
+impl From<OsTreeError> for TreeError {
+    fn from(err: OsTreeError) -> TreeError {
+        TreeError {
+            kind: err.kind,
+            message: err.message.to_string_lossy().into_owned(),
+            path: err.path.map(|p| p.to_string_lossy().into_owned()),
+            position: err.position,
+            lens: err.lens,
+        }
+    }
+}
+
+impl From<Box<OsTreeError>> for TreeError {
+    fn from(err: Box<OsTreeError>) -> TreeError {
+        (*err).into()
+    }
+}
+
+/// An error read from inside the tree.
+///
+/// Tries to collect as much information as possible.
+///
+/// The error will show up underneath `/augeas/FILENAME/error` if there is a filename, and underneath
+/// `/augeas/text/PATH` otherwise. `PATH` is the path to the toplevel node in
+/// the tree where the lens application happened.
+#[derive(Clone, PartialEq, Debug)]
 pub struct TreeError {
     /// Error kind
     pub kind: String,
@@ -219,6 +268,28 @@ pub struct TreeError {
     pub position: Option<ErrorPosition>,
     /// The lens where the error occurred
     pub lens: Option<String>,
+}
+
+impl fmt::Display for OsTreeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "augeas error:{}:{}",
+            self.kind,
+            self.message.to_string_lossy()
+        )?;
+        if let Some(path) = &self.path {
+            write!(f, " at {}", path.to_string_lossy())?;
+        }
+        if let Some(position) = &self.position {
+            write!(
+                f,
+                " at {}:{}:{}",
+                position.line, position.char, position.position
+            )?;
+        }
+        Ok(())
+    }
 }
 
 impl fmt::Display for TreeError {

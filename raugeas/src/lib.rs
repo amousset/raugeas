@@ -56,6 +56,7 @@ use std::mem::transmute;
 use std::ops::Range;
 use std::os::raw::{c_char, c_int};
 use std::os::unix::prelude::{OsStrExt, OsStringExt};
+use std::str::FromStr;
 use std::{fmt, ptr};
 
 pub mod error;
@@ -123,6 +124,21 @@ pub enum Position {
     Before,
     /// Insert the new node after the node passed to [`insert`](#method.insert)
     After,
+}
+
+impl FromStr for Position {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s.to_lowercase().as_str() {
+            "before" => Ok(Position::Before),
+            "after" => Ok(Position::After),
+            _ => Err(Error::Augeas(AugeasError::new_unknown(format!(
+                "Invalid position: {}",
+                s
+            )))),
+        }
+    }
 }
 
 impl From<Position> for c_int {
@@ -1339,6 +1355,15 @@ impl Drop for Augeas {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn position_test() {
+        let p = Position::After;
+        assert_eq!(p, "after".parse().unwrap());
+
+        let p = Position::Before;
+        assert_eq!(p, "BEFORE".parse().unwrap());
+    }
 
     #[test]
     fn version_test() {

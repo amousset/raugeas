@@ -7,6 +7,14 @@
 //! more idiomatic to use in Rust. It does not aim to provide a high-level API to manipulate
 //! configuration files, but rather to provide a safe and idiomatic way to interact with Augeas.
 //!
+//! The main differences with the C API are:
+//!
+//! * Add `clear` and `clearm` methods clear values (instead of passing an `Option` to `set`/`setm`).
+//! * Use a `Span` struct to represent the span of a node in a file.
+//! * Use a `Position` enum to indicate where to insert a new node.
+//! * Use an `Attr` struct to represent the attributes of a node.
+//! * Use a `SaveMode` enum to indicate how to save changes.
+//!
 //! ## Usage
 //!
 //! In `Cargo.toml`:
@@ -505,7 +513,7 @@ impl Augeas {
     /// be possible depending on the complexity of the path expression
     /// `path`.
     ///
-    /// It is an error if more than one node matches `path`
+    /// It is an error if more than one node matches `path`.
     pub fn set<T: AsRef<OsStr>, S: AsRef<OsStr>>(&mut self, path: T, value: S) -> Result<()> {
         let path = path.as_ref();
         let value = value.as_ref();
@@ -514,6 +522,21 @@ impl Augeas {
         let value_c = CString::new(value.as_bytes())?;
 
         unsafe { aug_set(self.ptr, path_c.as_ptr(), value_c.as_ptr()) };
+        self.check_error()?;
+
+        Ok(())
+    }
+
+    /// Clear the value of a node.
+    ///
+    /// Find the node matching `path` and clear its value.
+    ///
+    /// It is an error if more than one node matches `path`.
+    pub fn clear<T: AsRef<OsStr>>(&mut self, path: T) -> Result<()> {
+        let path = path.as_ref();
+        let path_c = CString::new(path.as_bytes())?;
+
+        unsafe { aug_set(self.ptr, path_c.as_ptr(), ptr::null()) };
         self.check_error()?;
 
         Ok(())
@@ -707,6 +730,23 @@ impl Augeas {
         let value = CString::new(value.as_bytes())?;
 
         let r = unsafe { aug_setm(self.ptr, base.as_ptr(), sub.as_ptr(), value.as_ptr()) };
+        self.check_error()?;
+
+        Ok(r as u32)
+    }
+
+    /// Clear the value of multiple nodes in one operation.
+    ///
+    /// Clear nodes matching `sub` by interpreting `sub` as a path expression relative to each
+    /// node matching `base`.
+    pub fn clearm<T: AsRef<OsStr>, S: AsRef<OsStr>>(&mut self, base: T, sub: S) -> Result<u32> {
+        let base = base.as_ref();
+        let sub = sub.as_ref();
+
+        let base = CString::new(base.as_bytes())?;
+        let sub = CString::new(sub.as_bytes())?;
+
+        let r = unsafe { aug_setm(self.ptr, base.as_ptr(), sub.as_ptr(), ptr::null()) };
         self.check_error()?;
 
         Ok(r as u32)
@@ -1404,6 +1444,22 @@ mod tests {
     }
 
     #[test]
+    fn set_test() {
+        let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
+        aug.set("etc/passwd/root/uid", "42").unwrap();
+        let uid = aug.get("etc/passwd/root/uid").unwrap().unwrap();
+        assert_eq!("42", uid);
+    }
+
+    #[test]
+    fn set_clear() {
+        let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
+        aug.clear("etc/passwd/root/uid").unwrap();
+        let uid = aug.get("etc/passwd/root/uid").unwrap();
+        assert_eq!(None, uid);
+    }
+
+    #[test]
     fn get_nonutf8_test() {
         let invalid: &[u8; 2] = &[0xc3, 0x28];
         let invalid = OsStr::from_bytes(invalid);
@@ -1525,6 +1581,14 @@ mod tests {
 
     #[test]
     fn setm_test() {
+        let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
+
+        let count = aug.setm("etc/passwd", "*/shell", "/bin/zsh").unwrap();
+        assert_eq!(9, count);
+    }
+
+    #[test]
+    fn clearm_test() {
         let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
 
         let count = aug.setm("etc/passwd", "*/shell", "/bin/zsh").unwrap();

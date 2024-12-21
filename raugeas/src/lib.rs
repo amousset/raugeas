@@ -10,10 +10,16 @@
 //! The main differences with the C API are:
 //!
 //! * Add `clear` and `clearm` methods clear values (instead of passing an `Option` to `set`/`setm`).
+//! * Add `touch` method to create a node if it does not exist.
 //! * Use a `Span` struct to represent the span of a node in a file.
 //! * Use a `Position` enum to indicate where to insert a new node.
 //! * Use an `Attr` struct to represent the attributes of a node.
 //! * Use a `SaveMode` enum to indicate how to save changes.
+//!
+//! The main references:
+//!
+//! * https://github.com/hercules-team/augeas/blob/master/src/augeas.h
+//! * https://github.com/hercules-team/ruby-augeas/tree/master/lib
 //!
 //! ## Usage
 //!
@@ -537,6 +543,20 @@ impl Augeas {
         let path_c = CString::new(path.as_bytes())?;
 
         unsafe { aug_set(self.ptr, path_c.as_ptr(), ptr::null()) };
+        self.check_error()?;
+
+        Ok(())
+    }
+
+    /// Create the `path` with empty value if it doesn't exist.
+    pub fn touch<T: AsRef<OsStr>>(&mut self, path: T) -> Result<()> {
+        let path = path.as_ref();
+        let path_c = CString::new(path.as_bytes())?;
+
+        let no_matches = self.matches_os(path)?.is_empty();
+        if no_matches {
+            unsafe { aug_set(self.ptr, path_c.as_ptr(), ptr::null()) };
+        }
         self.check_error()?;
 
         Ok(())
@@ -1452,11 +1472,26 @@ mod tests {
     }
 
     #[test]
-    fn set_clear() {
+    fn clear_test() {
         let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
         aug.clear("etc/passwd/root/uid").unwrap();
         let uid = aug.get("etc/passwd/root/uid").unwrap();
         assert_eq!(None, uid);
+    }
+
+    #[test]
+    fn touch_test() {
+        let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
+        let exists = aug.matches("etc/passwd/epicaste/uid").unwrap();
+        assert_eq!(exists.len(), 0);
+        // Creates missing nodes.
+        aug.touch("etc/passwd/epicaste/uid").unwrap();
+        let exists = aug.matches("etc/passwd/epicaste/uid").unwrap();
+        assert_eq!(exists.len(), 1);
+        // Does not overwrite existing nodes.
+        aug.touch("etc/passwd/root/uid").unwrap();
+        let uid = aug.get("etc/passwd/root/uid").unwrap().unwrap();
+        assert_eq!("0", uid);
     }
 
     #[test]

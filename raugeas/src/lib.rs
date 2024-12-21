@@ -23,7 +23,7 @@
 //! ```
 //! use raugeas::{Augeas, Flags};
 //!
-//! let mut aug = Augeas::init("/", "", Flags::NONE).unwrap();
+//! let mut aug = Augeas::init(Some("/"), "", Flags::NONE).unwrap();
 //!
 //! // Get the ip address for host.example.com from `/etc/hosts`.
 //! let entry = aug.get("etc/hosts/*[canonical = 'host.example.com']/ip")?;
@@ -301,11 +301,11 @@ impl Augeas {
     ///
     /// The `flags` are a bitmask of values from `Flags`.
     pub fn init<T: AsRef<OsStr>, S: AsRef<OsStr>>(
-        root: impl Into<Option<T>>,
+        root: Option<T>,
         loadpath: S,
         flags: Flags,
     ) -> Result<Self> {
-        let root = &match root.into() {
+        let root = &match root {
             Some(r) => {
                 let r = r.as_ref();
                 Some(CString::new(r.as_bytes())?)
@@ -1366,15 +1366,23 @@ mod tests {
     }
 
     #[test]
+    fn init_test() {
+        let aug = Augeas::init(None::<&str>, "", Flags::NO_MODULE_AUTOLOAD);
+        assert!(aug.is_ok());
+        let aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE);
+        assert!(aug.is_ok());
+    }
+
+    #[test]
     fn version_test() {
-        let aug = Augeas::init("", "toto", Flags::NONE).unwrap();
+        let aug = Augeas::init(Some("tests/test_root"), "toto", Flags::NONE).unwrap();
         assert!(aug.version().unwrap().starts_with("1."));
     }
 
     #[test]
     fn get_test() {
         use error::ErrorCode;
-        let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
         let root_uid = aug
             .get("etc/passwd/root/uid")
             .unwrap()
@@ -1401,7 +1409,7 @@ mod tests {
         let invalid = OsStr::from_bytes(invalid);
         dbg!(invalid);
 
-        let mut aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
 
         aug.set("etc/passwd/root/home", invalid).unwrap();
 
@@ -1413,7 +1421,7 @@ mod tests {
 
     #[test]
     fn label_test() {
-        let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
         let root_name = aug.label("etc/passwd/root").unwrap().unwrap();
 
         assert_eq!(&root_name, "root", "name of root was {}", root_name);
@@ -1421,7 +1429,7 @@ mod tests {
 
     #[test]
     fn matches_test() {
-        let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
 
         let users = aug.matches("etc/passwd/*").unwrap();
         let count = aug.count("etc/passwd/*").unwrap();
@@ -1434,14 +1442,14 @@ mod tests {
 
     #[test]
     fn count_test() {
-        let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
         let users = aug.count("etc/passwd/*").unwrap();
         assert_eq!(9, users);
     }
 
     #[test]
     fn insert_test() {
-        let mut aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
 
         aug.insert("etc/passwd/root", "before", Position::Before)
             .unwrap();
@@ -1460,7 +1468,7 @@ mod tests {
 
     #[test]
     fn rm_test() {
-        let mut aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
 
         let e = aug.rm("/augeas[");
         assert!(e.is_err());
@@ -1471,7 +1479,7 @@ mod tests {
 
     #[test]
     fn mv_test() {
-        let mut aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
 
         let e = aug.mv("etc/passwd", "etc/passwd/root");
         assert!(e.is_err());
@@ -1483,7 +1491,7 @@ mod tests {
 
     #[test]
     fn defvar_test() {
-        let mut aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
 
         aug.defvar("x", "etc/passwd/*").unwrap();
         let n = aug.count("$x").unwrap();
@@ -1493,7 +1501,7 @@ mod tests {
 
     #[test]
     fn defnode_test() {
-        let mut aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
 
         let created = aug.defnode("y", "etc/notthere", "there").unwrap();
         assert!(created);
@@ -1507,7 +1515,7 @@ mod tests {
 
     #[test]
     fn load_test() {
-        let mut aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
 
         aug.set("etc/passwd/root/uid", "42").unwrap();
         aug.load().unwrap();
@@ -1517,7 +1525,7 @@ mod tests {
 
     #[test]
     fn setm_test() {
-        let mut aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
 
         let count = aug.setm("etc/passwd", "*/shell", "/bin/zsh").unwrap();
         assert_eq!(9, count);
@@ -1525,7 +1533,7 @@ mod tests {
 
     #[test]
     fn span_test() {
-        let aug = Augeas::init("tests/test_root", "", Flags::ENABLE_SPAN).unwrap();
+        let aug = Augeas::init(Some("tests/test_root"), "", Flags::ENABLE_SPAN).unwrap();
 
         // happy path
         let span = aug.span("etc/passwd/root").unwrap().unwrap();
@@ -1545,7 +1553,7 @@ mod tests {
 
     #[test]
     fn store_retrieve_test() {
-        let mut aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
 
         aug.set("/text/in", "alex:x:12:12:Alex:/home/alex:/bin/sh\n")
             .unwrap();
@@ -1601,7 +1609,7 @@ mod tests {
 
     #[test]
     fn rename_test() {
-        let mut aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
 
         aug.rename("etc/passwd/root", "ruth").unwrap();
 
@@ -1614,7 +1622,7 @@ mod tests {
 
     #[test]
     fn transform_test() {
-        let mut aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
 
         aug.transform("Hosts.lns", "/usr/local/etc/hosts", false)
             .unwrap();
@@ -1626,7 +1634,7 @@ mod tests {
 
     #[test]
     fn cp_test() {
-        let mut aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
 
         aug.cp("etc/passwd/root", "etc/passwd/ruth").unwrap();
         let ruth = aug.get("etc/passwd/ruth/uid").unwrap().unwrap();
@@ -1638,7 +1646,7 @@ mod tests {
 
     #[test]
     fn escape_test() {
-        let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
 
         // no escaping needed
         let n = aug.escape_name("foo").unwrap();
@@ -1650,7 +1658,7 @@ mod tests {
 
     #[test]
     fn load_file_test() {
-        let mut aug = Augeas::init("tests/test_root", "", Flags::NO_LOAD).unwrap();
+        let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NO_LOAD).unwrap();
 
         aug.load_file("/etc/passwd").unwrap();
         let root = aug.get("etc/passwd/root/uid").unwrap();
@@ -1664,7 +1672,7 @@ mod tests {
 
     #[test]
     fn source_test() {
-        let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
 
         let s = aug.source("etc/passwd/root/uid").unwrap();
         assert_eq!(s.unwrap(), "/files/etc/passwd")
@@ -1672,7 +1680,7 @@ mod tests {
 
     #[test]
     fn preview_test() {
-        let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
 
         let s = aug.preview("etc/non-existing").unwrap_err();
         assert!(matches!(s, Error::Augeas(err) if err.code == ErrorCode::NoMatch));
@@ -1684,7 +1692,7 @@ mod tests {
 
     #[test]
     fn ns_test() {
-        let mut aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
 
         aug.defvar("x", "etc/passwd/*").unwrap();
         aug.defvar("uid", "etc/passwd/*/uid").unwrap();
@@ -1718,14 +1726,14 @@ mod tests {
 
     #[test]
     fn print_test() {
-        let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
         let content = aug.print("/augeas/version").unwrap();
         assert!(content.starts_with("/augeas/version = \"1."));
     }
 
     #[test]
     fn srun_test() {
-        let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
         let (num, res) = aug.srun("help").unwrap();
         assert!(matches!(num, CommandsNumber::Success(_)));
         assert!(res.contains("commands:"));
@@ -1733,21 +1741,21 @@ mod tests {
 
     #[test]
     fn srun_with_invalid_command() {
-        let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
         let result = aug.srun("invalid_command");
         assert!(result.is_err());
     }
 
     #[test]
     fn srun_with_quit_command() {
-        let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
         let (num, _out) = aug.srun("quit").unwrap();
         assert_eq!(num, CommandsNumber::Quit);
     }
 
     #[test]
     fn save_mode_test() {
-        let mut aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let mut aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
         aug.set_save_mode(SaveMode::Backup).unwrap();
         let mode = aug.get("/augeas/save").unwrap().unwrap();
         assert_eq!("backup", mode);
@@ -1764,7 +1772,7 @@ mod tests {
 
     #[test]
     fn error_test() {
-        let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+        let aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
         let garbled = aug.matches("/invalid[");
 
         if let Err(Error::Augeas(err)) = garbled {

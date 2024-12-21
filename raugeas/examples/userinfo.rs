@@ -1,7 +1,7 @@
 use raugeas::{Augeas, Flags};
 
 fn main() {
-    let aug = Augeas::init("tests/test_root", "", Flags::NONE).unwrap();
+    let aug = Augeas::init(Some("tests/test_root"), "", Flags::NONE).unwrap();
     let username = "root";
 
     println!("Infos about '{}':", username);

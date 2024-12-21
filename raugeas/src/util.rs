@@ -109,7 +109,7 @@ mod tests {
 
             let hello = "Hello, World!";
             let s = CString::new(hello).unwrap();
-            libc::fprintf(file, s.as_ptr() as *const i8);
+            libc::fprintf(file, s.as_ptr());
 
             let res = read_memstream(&mut buf, &mut size, file).unwrap();
             assert_eq!(res, hello);

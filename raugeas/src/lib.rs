@@ -971,12 +971,10 @@ impl Augeas {
     /// `[` and `]` are prefixed with a `\\`. Note that this function assumes
     /// that it is passed a name, not a path, and will therefore escape `/`,
     /// too.
-    ///
-    /// Returns `None` if `inp` does not need any escaping at all.
-    pub fn escape_name<T: AsRef<OsStr>>(&self, inp: T) -> Result<Option<String>> {
+    pub fn escape_name<'a>(&self, inp: &'a str) -> Result<Cow<'a, str>> {
         match self.escape_name_os(inp) {
-            Ok(Some(p)) => Ok(Some(String::from_utf8(p.into_vec())?)),
-            Ok(None) => Ok(None),
+            Ok(Some(p)) => Ok(String::from_utf8(p.into_vec())?.into()),
+            Ok(None) => Ok(inp.into()),
             Err(e) => Err(e),
         }
     }
@@ -1030,7 +1028,7 @@ impl Augeas {
     }
 
     /// Return the contents of the file that would be written for the file associated with `path`.
-    //  If there is no file corresponding to `path`, it returns `None`.
+    ///  If there is no file corresponding to `path`, it returns `None`.
     pub fn preview_os<T: AsRef<OsStr>>(&self, path: T) -> Result<Option<OsString>> {
         let path = path.as_ref();
         let path = CString::new(path.as_bytes())?;
@@ -1046,7 +1044,7 @@ impl Augeas {
     }
 
     /// Return the contents of the file that would be written for the file associated with `path`.
-    //  If there is no file corresponding to `path`, it returns `None`.
+    ///  If there is no file corresponding to `path`, it returns `None`.
     pub fn preview<T: AsRef<OsStr>>(&self, path: T) -> Result<Option<String>> {
         match self.preview_os(path) {
             Ok(Some(p)) => Ok(Some(String::from_utf8(p.into_vec())?)),
@@ -1749,10 +1747,10 @@ mod tests {
 
         // no escaping needed
         let n = aug.escape_name("foo").unwrap();
-        assert_eq!(None, n);
+        assert_eq!("foo", n);
 
         let n = aug.escape_name("foo[").unwrap();
-        assert_eq!(Some(String::from("foo\\[")), n);
+        assert_eq!("foo\\[", n);
     }
 
     #[test]

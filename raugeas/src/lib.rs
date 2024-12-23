@@ -16,11 +16,6 @@
 //! * Use an `Attr` struct to represent the attributes of a node.
 //! * Use a `SaveMode` enum to indicate how to save changes.
 //!
-//! The main references:
-//!
-//! * https://github.com/hercules-team/augeas/blob/master/src/augeas.h
-//! * https://github.com/hercules-team/ruby-augeas/tree/master/lib
-//!
 //! ## Usage
 //!
 //! In `Cargo.toml`:
@@ -54,6 +49,11 @@
 //! )?;
 //! # Ok::<(), raugeas::Error>(())
 //! ```
+
+// References for the Rust implementation:
+//
+// * https://github.com/hercules-team/augeas/blob/master/src/augeas.h
+// * https://github.com/hercules-team/ruby-augeas/tree/master/lib
 
 #![warn(rust_2018_idioms, unused_qualifications, missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -99,7 +99,7 @@ pub struct Augeas {
 
 /// Parameters for the save modes.
 ///
-/// After calling `save`, the list of files that has been changed can be found in the nodes.
+/// After calling [`save`](#method.save), the list of files that has been changed can be found in the nodes.
 /// `/augeas/events/saved`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SaveMode {
@@ -131,7 +131,7 @@ impl Display for SaveMode {
 ///
 /// Use this enum with [`insert`](#method.insert) to indicate whether the
 /// new node should be inserted before or after the node passed to
-/// [`insert`](#method.insert)
+/// [`insert`](#method.insert).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Position {
     /// Insert the new node before the node passed to [`insert`](#method.insert)
@@ -293,7 +293,7 @@ impl TryFrom<OsAttr> for Attr {
     }
 }
 
-/// Outcome of a successful `srun` command.
+/// Outcome of a successful [`srun`](#method.srun) command.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum CommandsNumber {
     /// A `quit` command was issued.
@@ -497,11 +497,11 @@ impl Augeas {
     /// Turn all files in the tree for which entries have been changed,
     /// added, or deleted back into text and write them back to file.
     ///
-    /// If `SAVE_NEWFILE` is set in the `Flags` passed to `init`, create
+    /// If `SAVE_NEWFILE` is set in the `Flags` passed to [`init`](#method.init), create
     /// changed files as new files with the extension `.augnew`, and leave the
     /// original file unmodified.
     ///
-    /// Otherwise, if `SAVE_BACKUP` is set in the `Flags` passed to `init`,
+    /// Otherwise, if `SAVE_BACKUP` is set in the `Flags` passed to [`init`](#method.init),
     /// move the original file to a new file with extension `.augsave`.
     ///
     /// If neither of these flags is set, overwrite the original file.
@@ -715,7 +715,7 @@ impl Augeas {
     /// matches at least one `incl` pattern and no `excl` pattern is
     /// transformed. The order of `incl` and `excl` entries is irrelevant.
     ///
-    /// When `init` is first called, it populates `/augeas/load` with the
+    /// When [`init`](#method.init) is first called, it populates `/augeas/load` with the
     /// transforms marked for autoloading in all the modules it finds.
     ///
     /// Before loading any files, `load` will remove everything underneath
@@ -884,12 +884,12 @@ impl Augeas {
         Ok(())
     }
 
-    /// Rename the label of all nodes matching SRC to LBL.
+    /// Rename the label of all nodes matching `src` to `label`.
     ///
     /// Returns the number of nodes renamed.
-    pub fn rename<T: AsRef<OsStr>, S: AsRef<OsStr>>(&mut self, src: T, lbl: S) -> Result<u32> {
+    pub fn rename<T: AsRef<OsStr>, S: AsRef<OsStr>>(&mut self, src: T, label: S) -> Result<u32> {
         let src = src.as_ref();
-        let lbl = lbl.as_ref();
+        let lbl = label.as_ref();
 
         let src = CString::new(src.as_bytes())?;
         let lbl = CString::new(lbl.as_bytes())?;
@@ -979,9 +979,9 @@ impl Augeas {
         }
     }
 
-    /// Load a `file` using the lens that would ordinarily be used by `load`,
+    /// Load a `file` using the lens that would ordinarily be used by [`load`](#method.load),
     /// i.e. the lens whose autoload statement matches the `file`. Similar to
-    /// `load`, this function returns successfully even if `file` does not exist
+    /// [`load`](#method.load), this function returns successfully even if `file` does not exist
     /// or if the `file` cannot be processed by the associated lens. It is an
     /// error though if no lens can be found to process `file`.
     pub fn load_file<T: AsRef<OsStr>>(&mut self, file: T) -> Result<()> {
@@ -1028,7 +1028,8 @@ impl Augeas {
     }
 
     /// Return the contents of the file that would be written for the file associated with `path`.
-    ///  If there is no file corresponding to `path`, it returns `None`.
+    ///
+    /// If there is no file corresponding to `path`, it returns `None`.
     pub fn preview_os<T: AsRef<OsStr>>(&self, path: T) -> Result<Option<OsString>> {
         let path = path.as_ref();
         let path = CString::new(path.as_bytes())?;
@@ -1044,7 +1045,8 @@ impl Augeas {
     }
 
     /// Return the contents of the file that would be written for the file associated with `path`.
-    ///  If there is no file corresponding to `path`, it returns `None`.
+    ///
+    /// If there is no file corresponding to `path`, it returns `None`.
     pub fn preview<T: AsRef<OsStr>>(&self, path: T) -> Result<Option<String>> {
         match self.preview_os(path) {
             Ok(Some(p)) => Ok(Some(String::from_utf8(p.into_vec())?)),

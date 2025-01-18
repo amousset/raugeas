@@ -447,12 +447,14 @@ impl Augeas {
                 .map(|i| {
                     let match_ptr: *const c_char = transmute(*matches_ptr.offset(i as isize));
                     let str = ptr_to_os_string(match_ptr).unwrap();
-                    libc::free(transmute::<*const i8, *mut libc::c_void>(match_ptr));
+                    libc::free(transmute::<*const c_char, *mut libc::c_void>(match_ptr));
                     str
                 })
                 .collect::<Vec<OsString>>();
 
-            libc::free(transmute::<*mut *mut i8, *mut libc::c_void>(matches_ptr));
+            libc::free(transmute::<*mut *mut c_char, *mut libc::c_void>(
+                matches_ptr,
+            ));
 
             Ok(matches_vec)
         }
